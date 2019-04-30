@@ -8,4 +8,4 @@ INCLUDES=$(INCLUDES);.
 
 USER_C_FLAGS=$(USER_C_FLAGS) /DNDEBUG
 
-SOURCES = pe.c utils.c main.c
+SOURCES = pe.c utils.c main.c file.c

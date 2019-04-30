@@ -1,0 +1,173 @@
+﻿NTSTATUS WINAPI
+MyNtOpenProcess (
+    __out PHANDLE ProcessHandle,
+    __in ACCESS_MASK DesiredAccess,
+    __in POBJECT_ATTRIBUTES ObjectAttributes,
+    __in_opt PCLIENT_ID ClientId
+    )
+{
+    HANDLE Handle;
+    KPROCESSOR_MODE PreviousMode;
+    NTSTATUS Status;
+    PEPROCESS Process;
+    PETHREAD Thread;
+    CLIENT_ID CapturedCid={0};
+    BOOLEAN ObjectNamePresent;
+    BOOLEAN ClientIdPresent;
+    ACCESS_STATE AccessState;
+    AUX_ACCESS_DATA AuxData;
+    ULONG Attributes;
+        KIRQL CurrentIrql;
+    PAGED_CODE();
+        CurrentIrql = KeGetCurrentIrql();
+        if(CurrentIrql>PASSIVE_LEVEL)
+        {
+                KeLowerIrql(PASSIVE_LEVEL);
+        }
+        //DbgPrint("HxNtOpenProcess IRQL: %u \n",CurrentIrql);
+        DbgPrint("OD已经调用过我们的MyNtOpenProcess ()函数 \n");
+        ULONG www=(ULONG)ClientId->UniqueProcess;
+        //DbgPrint("传入ID%d\n",www);
+        //DbgPrint("id====%d",*(int*)ClientId);
+
+
+    PreviousMode = KeGetPreviousMode();
+    if (PreviousMode != KernelMode) {
+        __try {
+            ProbeForWriteHandle (ProcessHandle);
+            ProbeForReadSmallStructure (ObjectAttributes,
+                                        sizeof(OBJECT_ATTRIBUTES),
+                                        sizeof(ULONG));
+            ObjectNamePresent = (BOOLEAN)ARGUMENT_PRESENT (ObjectAttributes->ObjectName);
+            //Attributes = ObSanitizeHandleAttributes (ObjectAttributes->Attributes, UserMode);
+                        Attributes=ObjectAttributes->Attributes;
+            if (ARGUMENT_PRESENT (ClientId)) {
+                ProbeForReadSmallStructure (ClientId, sizeof (CLIENT_ID), sizeof (ULONG));
+                CapturedCid = *ClientId;
+                ClientIdPresent = TRUE;
+            } else {
+                ClientIdPresent = FALSE;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+                        //DbgPrint("xxmm");
+            return GetExceptionCode();
+        }
+                //DbgPrint("11");
+    } else {
+        ObjectNamePresent = (BOOLEAN)ARGUMENT_PRESENT (ObjectAttributes->ObjectName);
+        //Attributes = ObSanitizeHandleAttributes (ObjectAttributes->Attributes, KernelMode);
+                Attributes=ObjectAttributes->Attributes;
+        if (ARGUMENT_PRESENT (ClientId)) {
+            CapturedCid = *ClientId;
+            ClientIdPresent = TRUE;
+        } else {
+            ClientIdPresent = FALSE;
+        }
+    //DbgPrint("22");
+        }
+    if (ObjectNamePresent && ClientIdPresent) {
+                //DbgPrint("33");
+        return STATUS_INVALID_PARAMETER_MIX;
+    }
+    Status = SeCreateAccessState(
+                 &AccessState,
+                 &AuxData,
+                 DesiredAccess,
+                 &(*PsProcessType)->TypeInfo.GenericMapping
+                 );
+    if ( !NT_SUCCESS(Status) ) {
+                //DbgPrint("44");
+        return Status;
+    }
+    if (SeSinglePrivilegeCheck( SeDebugPrivilege, PreviousMode )) {
+        if ( AccessState.RemainingDesiredAccess & MAXIMUM_ALLOWED ) {
+            AccessState.PreviouslyGrantedAccess |= PROCESS_ALL_ACCESS;
+        } else {
+            AccessState.PreviouslyGrantedAccess |= ( AccessState.RemainingDesiredAccess );
+        }
+        AccessState.RemainingDesiredAccess = 0;
+                //DbgPrint("55");
+    }
+    if (ObjectNamePresent) {
+        Status = ObOpenObjectByName(
+                    ObjectAttributes,
+                    *PsProcessType,
+                    PreviousMode,
+                    &AccessState,
+                    0,
+                    NULL,
+                    &Handle
+                    );
+        SeDeleteAccessState( &AccessState );
+        if ( NT_SUCCESS(Status) ) {
+            __try {
+                *ProcessHandle = Handle;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                return GetExceptionCode ();
+            }
+        }
+                //DbgPrint("66");
+        return Status;
+    }
+    if ( ClientIdPresent ) {
+        Thread = NULL;
+        if (CapturedCid.UniqueThread) {
+            Status = PsLookupProcessThreadByCid(
+                        &CapturedCid,
+                        &Process,
+                        &Thread
+                        );
+            if (!NT_SUCCESS(Status)) {
+                SeDeleteAccessState( &AccessState );
+                                //DbgPrint("77");
+                return Status;
+            }
+        } else {
+            Status = PsLookupProcessByProcessId(
+                        CapturedCid.UniqueProcess,
+                        &Process
+                        );
+            if ( !NT_SUCCESS(Status) ) {
+                SeDeleteAccessState( &AccessState );
+                                //DbgPrint("88");
+                return Status;
+            }
+        }
+        Status = ObOpenObjectByPointer(
+                    Process,
+                    Attributes,
+                    &AccessState,
+                    0,
+                    *PsProcessType,
+                    PreviousMode,
+                    &Handle
+                    ); //得到进程句柄
+                /*Status = ObOpenObjectByPointer(
+                              Process, 
+                  Attributes, 
+                  &AccessState, 
+                  PROCESS_ALL_ACCESS, 
+                  NULL, 
+                  KernelMode,//PreviousMode, 
+                  &Handle 
+                  );*/
+        SeDeleteAccessState( &AccessState );
+        if (Thread) {
+            ObDereferenceObject(Thread);
+                        //DbgPrint("99");
+        }
+        ObDereferenceObject(Process);
+        if (NT_SUCCESS (Status)) {
+            __try {
+                *ProcessHandle = Handle;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                                //DbgPrint("yyuu");
+                return GetExceptionCode ();
+            }
+        }
+                //DbgPrint("1010");
+        return Status;
+    }
+        //DbgPrint("1111");
+    return STATUS_INVALID_PARAMETER_MIX;
+}
